@@ -71,5 +71,10 @@ pip install -r requirements.txt
 
 # Run the Streamlit app
 streamlit run app.py
- 
+
+###👨‍💻 Author
+
+Pawan Yadav
+📍 Delhi, India
+📧 pawanya28@gmail.com
 
