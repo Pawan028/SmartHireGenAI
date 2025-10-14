@@ -71,3 +71,39 @@ pip install -r requirements.txt
 
 # Run the Streamlit app
 streamlit run app.py
+🔑 Environment Variables
+
+Create a .env file in your project directory and add the following line:
+
+GOOGLE_API_KEY=your_gemini_api_key_here
+
+**📊 Sample Output
+
+ATS Match Score: 85%
+
+Missing Keywords: SQL, Data Visualization, Excel
+
+Strengths: Relevant experience, strong analytical skills
+
+Feedback: Add quantifiable achievements and recent tools**
+
+**🧩 Future Enhancements**
+
+AI-powered resume builder with pre-designed templates
+
+Integration with LinkedIn for automatic profile analysis
+
+Multi-language resume evaluation
+
+Recruiter dashboard for bulk resume screening
+
+**👨‍💻 Author**
+
+Pawan Yadav
+📍 Delhi, India
+📧 pawanya28@gmail.com
+
+
+ 
+
+This project is open-source and available under the MIT License.
