@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 # Configuration
 load_dotenv()
 genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
-MODEL_NAME = "gemini-1.5-pro"
+MODEL_NAME = "gemini-2.5-flash-lite"
 
 # Initialize session state
 def init_session_state():
