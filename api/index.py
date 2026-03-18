@@ -57,7 +57,11 @@ def root() -> Any:
     index_file = PUBLIC_DIR / "index.html"
     if index_file.exists():
         return FileResponse(str(index_file), media_type="text/html")
-    return {"ok": True, "message": "SmartHire ATS API is running. Frontend file not found."}
+    return {
+        "ok": True,
+        "message": "SmartHire ATS API is running. Frontend file not found.",
+        "hint": "Set Vercel project Root Directory to repository root (.), then redeploy.",
+    }
 
 
 @app.get("/styles.css")
@@ -149,3 +153,4 @@ async def analyze(
         "deep_analysis": deep_analysis,
         "ai_warning": ai_warning,
     }
+
