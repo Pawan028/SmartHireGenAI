@@ -1,11 +1,13 @@
 import os
 from dataclasses import asdict
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List
 
 import fitz
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 from app import (
     FREE_TIER_MODEL_CANDIDATES,
@@ -18,6 +20,8 @@ from app import (
 )
 
 MAX_FILE_SIZE_MB = 8
+BASE_DIR = Path(__file__).resolve().parent.parent
+PUBLIC_DIR = BASE_DIR / "public"
 
 app = FastAPI(title="SmartHire ATS API", version="1.0.0")
 app.add_middleware(
@@ -46,6 +50,30 @@ def extract_text_from_pdf_bytes(pdf_bytes: bytes) -> str:
         if doc:
             doc.close()
     return " ".join(pages).strip()
+
+
+@app.get("/")
+def root() -> Any:
+    index_file = PUBLIC_DIR / "index.html"
+    if index_file.exists():
+        return FileResponse(str(index_file), media_type="text/html")
+    return {"ok": True, "message": "SmartHire ATS API is running. Frontend file not found."}
+
+
+@app.get("/styles.css")
+def styles() -> Any:
+    css_file = PUBLIC_DIR / "styles.css"
+    if css_file.exists():
+        return FileResponse(str(css_file), media_type="text/css")
+    raise HTTPException(status_code=404, detail="styles.css not found")
+
+
+@app.get("/app.js")
+def app_js() -> Any:
+    js_file = PUBLIC_DIR / "app.js"
+    if js_file.exists():
+        return FileResponse(str(js_file), media_type="application/javascript")
+    raise HTTPException(status_code=404, detail="app.js not found")
 
 
 @app.get("/api/health")
