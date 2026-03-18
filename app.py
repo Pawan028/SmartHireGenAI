@@ -163,8 +163,22 @@ STOPWORDS = {
     "working",
     "job",
     "responsibilities",
+    "responsibility",
     "requirements",
+    "required",
     "preferred",
+    "build",
+    "develop",
+    "developing",
+    "improve",
+    "improved",
+    "optimize",
+    "optimized",
+    "reduce",
+    "reduced",
+    "increase",
+    "increased",
+    "engineering",
     "experience",
     "years",
     "year",
@@ -296,7 +310,7 @@ OUTCOME_VERBS = {
 }
 
 QUANTIFIED_PATTERN = re.compile(
-    r"\b\d+(?:\.\d+)?\s*(?:%|percent|x|k|m|b|ms|s|sec|seconds?|minutes?|hours?|days?|weeks?|months?|years?|users?|customers?|clients?|projects?|pipelines?|models?|tickets?|requests?|records?)\b",
+    r"\b\d+(?:\.\d+)?\s*(?:%|percent\b|x\b|k\b|m\b|b\b|ms\b|s\b|sec\b|seconds?\b|minutes?\b|hours?\b|days?\b|weeks?\b|months?\b|years?\b|users?\b|customers?\b|clients?\b|projects?\b|pipelines?\b|models?\b|tickets?\b|requests?\b|records?\b)",
     re.IGNORECASE,
 )
 GENERIC_LANGUAGE_PATTERN = re.compile(
@@ -480,9 +494,10 @@ def extract_job_keywords(job_description: str, top_k: int = 35) -> List[str]:
     tokens = tokenize(job_description)
     freq: Dict[str, int] = {}
     for token in tokens:
-        if len(token) < 3 or token in STOPWORDS:
+        cleaned = token.strip(".,:;()[]{}")
+        if len(cleaned) < 3 or cleaned in STOPWORDS:
             continue
-        freq[token] = freq.get(token, 0) + 1
+        freq[cleaned] = freq.get(cleaned, 0) + 1
     ranked_tokens = sorted(freq.items(), key=lambda item: (-item[1], -len(item[0]), item[0]))
     keywords = [token for token, _ in ranked_tokens[:top_k]]
     jd_skills = [skill for skill in SKILL_TAXONOMY if keyword_present(lowered, skill)]
@@ -542,11 +557,12 @@ def analyze_resume_evidence(profile: ResumeProfile) -> Dict[str, int]:
 def compute_impact_score(evidence: Dict[str, int], years_experience: float) -> int:
     quantified_component = min(evidence["quantified_hits"], 10) / 10 * 52
     outcome_component = min(evidence["quantified_outcome_hits"], 6) / 6 * 26
-    action_component = min(evidence["impact_hits"], 20) / 20 * 22
+    action_component = min(evidence["impact_hits"], 20) / 20 * 16
+    outcome_verb_component = min(evidence["outcome_hits"], 10) / 10 * 6
     penalty = min(evidence["generic_hits"] * 2, 14)
     if years_experience >= 3 and evidence["quantified_hits"] < 2:
         penalty += 8
-    return clamp(quantified_component + outcome_component + action_component - penalty, low=20)
+    return clamp(quantified_component + outcome_component + action_component + outcome_verb_component - penalty, low=20)
 
 
 def compute_confidence_score(
