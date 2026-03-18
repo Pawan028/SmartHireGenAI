@@ -1,3 +1,4 @@
+import base64
 import hashlib
 import json
 import os
@@ -7,13 +8,15 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 import fitz
-import google.generativeai as genai
 import pandas as pd
+import requests
 import streamlit as st
 from dotenv import load_dotenv
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 load_dotenv()
+
+GEMINI_API_KEY = ""
 
 FREE_TIER_MODEL_CANDIDATES: List[str] = [
     "gemini-3-flash-preview",
@@ -793,9 +796,10 @@ def build_quick_suggestions(profile: ResumeProfile, score: ScoreCard) -> List[st
 
 
 def configure_gemini(api_key: str) -> bool:
+    global GEMINI_API_KEY
     if not api_key:
         return False
-    genai.configure(api_key=api_key)
+    GEMINI_API_KEY = api_key.strip()
     return True
 
 
@@ -808,22 +812,52 @@ def generate_text_once(
     max_tokens: int = 2200,
     expect_json: bool = True,
 ) -> str:
-    model = genai.GenerativeModel(model_name=model_name)
-    content: List[Any] = [prompt]
-    if parts:
-        content.extend(parts)
-    config_kwargs: Dict[str, Any] = {"temperature": temperature, "max_output_tokens": max_tokens}
+    api_key = GEMINI_API_KEY or os.getenv("GOOGLE_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("Gemini API key is not configured.")
+
+    request_parts: List[Dict[str, Any]] = [{"text": prompt}]
+    for part in parts or []:
+        mime_type = str(part.get("mime_type", "")).strip()
+        blob = part.get("data")
+        if mime_type and isinstance(blob, (bytes, bytearray)):
+            request_parts.append(
+                {
+                    "inline_data": {
+                        "mime_type": mime_type,
+                        "data": base64.b64encode(bytes(blob)).decode("ascii"),
+                    }
+                }
+            )
+
+    payload: Dict[str, Any] = {
+        "contents": [{"role": "user", "parts": request_parts}],
+        "generationConfig": {
+            "temperature": temperature,
+            "maxOutputTokens": max_tokens,
+        },
+    }
     if expect_json:
-        try:
-            config = genai.types.GenerationConfig(response_mime_type="application/json", **config_kwargs)
-            response = model.generate_content(content, generation_config=config)
-        except Exception:
-            config = genai.types.GenerationConfig(**config_kwargs)
-            response = model.generate_content(content, generation_config=config)
-    else:
-        config = genai.types.GenerationConfig(**config_kwargs)
-        response = model.generate_content(content, generation_config=config)
-    text = getattr(response, "text", "")
+        payload["generationConfig"]["responseMimeType"] = "application/json"
+
+    response = requests.post(
+        f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent",
+        params={"key": api_key},
+        json=payload,
+        timeout=60,
+    )
+    if response.status_code >= 400:
+        details = response.text[:600]
+        raise RuntimeError(f"Gemini API error ({response.status_code}): {details}")
+
+    response_payload = response.json()
+    candidates = response_payload.get("candidates") or []
+    if not candidates:
+        feedback = response_payload.get("promptFeedback")
+        raise RuntimeError(f"Gemini returned no candidates. promptFeedback={feedback}")
+    candidate = candidates[0]
+    content = candidate.get("content", {})
+    text = "".join(str(part.get("text", "")) for part in content.get("parts", []) if isinstance(part, dict))
     if not text:
         raise RuntimeError("Model returned an empty response.")
     return text
