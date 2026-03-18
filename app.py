@@ -264,6 +264,46 @@ SECTION_PATTERNS = {
     "certifications": ["certifications", "certificates"],
 }
 
+IMPACT_VERBS = {
+    "achieved",
+    "automated",
+    "built",
+    "created",
+    "delivered",
+    "designed",
+    "developed",
+    "enhanced",
+    "improved",
+    "increased",
+    "launched",
+    "led",
+    "optimized",
+    "reduced",
+    "scaled",
+    "streamlined",
+}
+
+OUTCOME_VERBS = {
+    "accelerated",
+    "boosted",
+    "cut",
+    "decreased",
+    "grew",
+    "improved",
+    "increased",
+    "reduced",
+    "saved",
+}
+
+QUANTIFIED_PATTERN = re.compile(
+    r"\b\d+(?:\.\d+)?\s*(?:%|percent|x|k|m|b|ms|s|sec|seconds?|minutes?|hours?|days?|weeks?|months?|years?|users?|customers?|clients?|projects?|pipelines?|models?|tickets?|requests?|records?)\b",
+    re.IGNORECASE,
+)
+GENERIC_LANGUAGE_PATTERN = re.compile(
+    r"\b(responsible for|worked on|involved in|participated in|helped with|assisted with)\b",
+    re.IGNORECASE,
+)
+
 
 @dataclass
 class ResumeProfile:
@@ -285,10 +325,13 @@ class ScoreCard:
     skills_match: int
     experience_match: int
     keywords_match: int
+    impact_match: int
     formatting_score: int
+    confidence: int
     matched_skills: List[str]
     missing_skills: List[str]
     missing_keywords: List[str]
+    evidence_gaps: List[str]
     summary: str
 
 
@@ -462,6 +505,111 @@ def detect_skills(text: str) -> List[str]:
     return sorted([skill for skill in SKILL_TAXONOMY if keyword_present(lowered, skill)])
 
 
+def count_keyword_occurrences(text: str, keywords: List[str]) -> Dict[str, int]:
+    lowered = text.lower()
+    counts: Dict[str, int] = {}
+    for keyword in keywords:
+        pattern = rf"(?<!\w){re.escape(keyword.lower())}(?!\w)"
+        occurrences = len(re.findall(pattern, lowered))
+        if occurrences:
+            counts[keyword] = occurrences
+    return counts
+
+
+def analyze_resume_evidence(profile: ResumeProfile) -> Dict[str, int]:
+    lowered = profile.text.lower()
+    tokens = tokenize(lowered)
+    impact_hits = sum(1 for token in tokens if token in IMPACT_VERBS)
+    outcome_hits = sum(1 for token in tokens if token in OUTCOME_VERBS)
+    quantified_hits = len(QUANTIFIED_PATTERN.findall(lowered))
+    quantified_outcome_hits = len(
+        re.findall(
+            r"\b(improved|increased|reduced|saved|boosted|cut|grew|optimized)\b[^.]{0,48}\b\d",
+            lowered,
+            re.IGNORECASE,
+        )
+    )
+    generic_hits = len(GENERIC_LANGUAGE_PATTERN.findall(lowered))
+    return {
+        "impact_hits": impact_hits,
+        "outcome_hits": outcome_hits,
+        "quantified_hits": quantified_hits,
+        "quantified_outcome_hits": quantified_outcome_hits,
+        "generic_hits": generic_hits,
+    }
+
+
+def compute_impact_score(evidence: Dict[str, int], years_experience: float) -> int:
+    quantified_component = min(evidence["quantified_hits"], 10) / 10 * 52
+    outcome_component = min(evidence["quantified_outcome_hits"], 6) / 6 * 26
+    action_component = min(evidence["impact_hits"], 20) / 20 * 22
+    penalty = min(evidence["generic_hits"] * 2, 14)
+    if years_experience >= 3 and evidence["quantified_hits"] < 2:
+        penalty += 8
+    return clamp(quantified_component + outcome_component + action_component - penalty, low=20)
+
+
+def compute_confidence_score(
+    profile: ResumeProfile,
+    keyword_coverage_ratio: float,
+    skill_coverage_ratio: float,
+    evidence: Dict[str, int],
+) -> int:
+    major_sections = sum(1 for section in ["summary", "experience", "skills", "education"] if profile.sections.get(section))
+    confidence = 30.0
+    if profile.word_count >= 300:
+        confidence += 16
+    elif profile.word_count >= 180:
+        confidence += 10
+    elif profile.word_count >= 120:
+        confidence += 6
+    else:
+        confidence -= 10
+    confidence += major_sections * 7
+    if profile.email and profile.phone:
+        confidence += 8
+    if profile.linkedin or profile.github:
+        confidence += 4
+    confidence += min(keyword_coverage_ratio, 1.0) * 14
+    confidence += min(skill_coverage_ratio, 1.0) * 10
+    confidence += min(evidence["quantified_hits"], 6) * 2
+    confidence -= min(evidence["generic_hits"], 6) * 2
+    if not profile.sections.get("experience"):
+        confidence -= 12
+    if len(profile.text) < 550:
+        confidence -= 8
+    return clamp(confidence, low=25, high=98)
+
+
+def build_evidence_gaps(
+    profile: ResumeProfile,
+    missing_skills: List[str],
+    missing_keywords: List[str],
+    evidence: Dict[str, int],
+    required_years: Optional[float],
+) -> List[str]:
+    gaps: List[str] = []
+    if evidence["quantified_hits"] < 2:
+        gaps.append("Add 3-5 quantified outcomes in experience bullets (% growth, latency reduction, volume handled, or cost saved).")
+    if evidence["quantified_outcome_hits"] < 2:
+        gaps.append("Rewrite bullets to action + scope + measurable result format for stronger recruiter signal.")
+    if evidence["generic_hits"] >= 4:
+        gaps.append("Replace generic language like 'responsible for' with direct ownership and results statements.")
+    if not profile.sections.get("experience"):
+        gaps.append("Create a dedicated Experience section with role, company, dates, and achievement bullets.")
+    if required_years and profile.years_experience < required_years:
+        gaps.append(
+            f"Role asks for ~{int(required_years)}+ years; emphasize equivalent depth through complex projects and leadership outcomes."
+        )
+    if missing_skills:
+        gaps.append(f"Highlight missing core skills where you have equivalent experience: {', '.join(missing_skills[:4])}.")
+    if missing_keywords:
+        gaps.append(f"Use exact role language naturally in bullets: {', '.join(missing_keywords[:4])}.")
+    if not profile.linkedin and not profile.github:
+        gaps.append("Add LinkedIn or GitHub URL to improve recruiter validation confidence.")
+    return gaps[:6]
+
+
 def formatting_score(profile: ResumeProfile) -> int:
     contact_points = 0
     if profile.email:
@@ -488,73 +636,129 @@ def formatting_score(profile: ResumeProfile) -> int:
     return clamp(contact_points + section_points + word_count_points)
 
 
-def build_score_summary(overall: int) -> str:
-    if overall >= 85:
-        return "Strong shortlist candidate with high ATS alignment."
-    if overall >= 70:
-        return "Good alignment, shortlist after minor resume optimization."
-    if overall >= 55:
-        return "Moderate fit. Needs targeted keyword and skills alignment."
+def build_score_summary(overall: int, confidence: int, impact_match: int, gap_count: int) -> str:
+    if overall >= 85 and confidence >= 78 and impact_match >= 65 and gap_count <= 2:
+        return "Strong shortlist candidate with proven ATS and outcome alignment."
+    if overall >= 72:
+        return "Good fit with interview potential after targeted evidence and keyword tuning."
+    if overall >= 58:
+        return "Moderate fit. Needs stronger impact evidence and role-specific alignment."
+    if confidence < 55:
+        return "Low-confidence match from weak resume signal quality. Improve structure and measurable outcomes."
     return "Low match today. Significant resume targeting needed before applying."
 
 
 def score_resume_against_job(profile: ResumeProfile, job_description: str) -> ScoreCard:
     resume_lower = profile.text.lower()
+    job_lower = job_description.lower()
     job_keywords = extract_job_keywords(job_description)
-    missing_keywords = [kw for kw in job_keywords if not keyword_present(resume_lower, kw)]
-    keyword_match_ratio = 1.0 - (len(missing_keywords) / max(1, len(job_keywords)))
-    keywords_match = clamp(keyword_match_ratio * 100)
+    keyword_occurrences = count_keyword_occurrences(resume_lower, job_keywords)
+    matched_keywords = sorted(keyword_occurrences.keys())
+    missing_keywords = [kw for kw in job_keywords if kw not in keyword_occurrences]
+    keyword_coverage_ratio = len(matched_keywords) / max(1, len(job_keywords))
+    keyword_breadth_factor = min(len(job_keywords) / 25, 1.0)
+    repetitive_keyword_count = sum(1 for count in keyword_occurrences.values() if count >= 4)
+    keyword_repeat_penalty = min(repetitive_keyword_count * 2, 12)
+    keywords_match = clamp((keyword_coverage_ratio * 88) + (keyword_breadth_factor * 12) - keyword_repeat_penalty)
+
     resume_skills = set(detect_skills(profile.text))
-    required_skills = {skill for skill in SKILL_TAXONOMY if keyword_present(job_description.lower(), skill)}
+    required_skills = {skill for skill in SKILL_TAXONOMY if keyword_present(job_lower, skill)}
     if required_skills:
         missing_skills = sorted(required_skills - resume_skills)
         matched_skills = sorted(required_skills & resume_skills)
-        skills_match = clamp((len(matched_skills) / len(required_skills)) * 100)
+        skill_coverage_ratio = len(matched_skills) / max(1, len(required_skills))
+        skill_breadth_factor = min(len(required_skills) / 10, 1.0)
+        skills_match = clamp((skill_coverage_ratio * 90) + (skill_breadth_factor * 10))
     else:
         missing_skills = []
         matched_skills = sorted(resume_skills)[:20]
-        skills_match = keywords_match
+        skill_coverage_ratio = min(len(matched_skills) / 12, 1.0)
+        skills_match = clamp((keywords_match * 0.85) + (skill_coverage_ratio * 15))
+
     required_years = extract_required_years(job_description)
     if required_years is None:
-        experience_match = 75 if profile.years_experience >= 1 else 55
+        if profile.years_experience >= 8:
+            experience_match = 82
+        elif profile.years_experience >= 4:
+            experience_match = 75
+        elif profile.years_experience >= 2:
+            experience_match = 68
+        elif profile.years_experience >= 1:
+            experience_match = 60
+        else:
+            experience_match = 48
     else:
         delta = profile.years_experience - required_years
         if delta >= 0:
-            experience_match = clamp(82 + min(delta * 4, 18))
+            experience_match = clamp(74 + min(delta * 5, 18))
         else:
-            experience_match = clamp(82 + delta * 12, low=25)
+            experience_match = clamp(74 + delta * 11, low=28)
+
+    evidence = analyze_resume_evidence(profile)
+    impact_match = compute_impact_score(evidence, profile.years_experience)
+    confidence = compute_confidence_score(profile, keyword_coverage_ratio, skill_coverage_ratio, evidence)
     fmt_score = formatting_score(profile)
-    overall = clamp((0.35 * keywords_match) + (0.30 * skills_match) + (0.20 * experience_match) + (0.15 * fmt_score))
+    base_overall = (
+        (0.26 * keywords_match)
+        + (0.24 * skills_match)
+        + (0.18 * experience_match)
+        + (0.20 * impact_match)
+        + (0.12 * fmt_score)
+    )
+    reliability_factor = 0.72 + (confidence / 100) * 0.28
+    penalties = 0
+    if required_skills and not matched_skills:
+        penalties += 15
+    if required_skills and len(missing_skills) >= max(3, int(len(required_skills) * 0.45)):
+        penalties += 6
+    if impact_match < 45:
+        penalties += 8
+    if keywords_match > 90 and impact_match < 45:
+        penalties += 8
+    if profile.word_count < 160 or profile.word_count > 1800:
+        penalties += 6
+    if confidence < 55:
+        penalties += 6
+    overall = clamp((base_overall * reliability_factor) - penalties)
     prioritized_missing = missing_skills + [kw for kw in missing_keywords if kw not in missing_skills]
+    evidence_gaps = build_evidence_gaps(profile, missing_skills, prioritized_missing, evidence, required_years)
     return ScoreCard(
         overall_score=overall,
         skills_match=skills_match,
         experience_match=experience_match,
         keywords_match=keywords_match,
+        impact_match=impact_match,
         formatting_score=fmt_score,
+        confidence=confidence,
         matched_skills=matched_skills[:20],
         missing_skills=missing_skills[:15],
         missing_keywords=prioritized_missing[:15],
-        summary=build_score_summary(overall),
+        evidence_gaps=evidence_gaps,
+        summary=build_score_summary(overall, confidence, impact_match, len(evidence_gaps)),
     )
 
 
 def build_quick_suggestions(profile: ResumeProfile, score: ScoreCard) -> List[str]:
     suggestions: List[str] = []
-    if score.keywords_match < 70:
+    suggestions.extend(score.evidence_gaps[:2])
+    if score.keywords_match < 75:
         missing = ", ".join(score.missing_keywords[:6]) if score.missing_keywords else "role-specific keywords"
         suggestions.append(f"Add missing JD keywords naturally in experience/projects: {missing}.")
-    if score.skills_match < 70 and score.missing_skills:
+    if score.skills_match < 75 and score.missing_skills:
         missing_skills = ", ".join(score.missing_skills[:5])
-        suggestions.append(f"Create a dedicated technical skills block including: {missing_skills}.")
-    if score.experience_match < 65:
+        suggestions.append(f"Create a dedicated technical skills block and show project evidence for: {missing_skills}.")
+    if score.impact_match < 60:
         suggestions.append(
-            "Strengthen achievement bullets with measurable impact (%, $, time saved, volume handled) for each role."
+            "Rewrite at least 4 experience bullets to include measurable outcomes (%, time saved, latency, revenue, or volume impact)."
         )
+    if score.experience_match < 65:
+        suggestions.append("Strengthen role chronology and date ranges so ATS can infer experience depth more accurately.")
     if score.formatting_score < 70:
         suggestions.append(
             "Use ATS-safe layout: single-column PDF, clear section headers, and standard fonts without graphics-heavy elements."
         )
+    if score.confidence < 65:
+        suggestions.append("Resume signal confidence is moderate; add clearer section labels, contact links, and stronger result evidence.")
     if not profile.sections.get("summary"):
         suggestions.append("Add a 3-4 line professional summary tailored to the exact target role.")
     if not profile.sections.get("projects"):
@@ -562,8 +766,14 @@ def build_quick_suggestions(profile: ResumeProfile, score: ScoreCard) -> List[st
     if not profile.linkedin and not profile.github:
         suggestions.append("Add LinkedIn/GitHub profile links near contact details to improve profile credibility.")
     if not suggestions:
-        suggestions.append("Resume is already strong. Focus on tailoring language to each job posting before applying.")
-    return suggestions[:6]
+        suggestions.append("Strong baseline. Tailor 2-3 bullets per application to mirror the exact JD outcomes and terminology.")
+    deduped: List[str] = []
+    seen = set()
+    for item in suggestions:
+        if item not in seen:
+            deduped.append(item)
+            seen.add(item)
+    return deduped[:6]
 
 
 def configure_gemini(api_key: str) -> bool:
@@ -696,6 +906,8 @@ Rules:
 - Use concrete language from the provided job description.
 - `targeted_improvements` must include at least 4 items.
 - Each rewrite should be ATS-friendly and metric-focused.
+- Be critical: avoid generic praise unless supported by deterministic score evidence.
+- If `confidence` < 70 or `impact_match` < 60, prioritize evidence-building actions in `gaps` and `ats_risks`.
 
 Job Description:
 {short_text(job_description, MAX_JOB_DESC_CHARS_FOR_AI)}
@@ -740,58 +952,74 @@ def deep_analysis_with_fallback(
 
 
 def heuristic_deep_analysis(profile: ResumeProfile, score: ScoreCard, job_description: str) -> Dict[str, Any]:
-    _ = job_description
     suggestions = build_quick_suggestions(profile, score)
+    role_keywords = extract_job_keywords(job_description, top_k=12)
+    keyword_focus = ", ".join(score.missing_keywords[:4]) if score.missing_keywords else ", ".join(role_keywords[:4])
+    skill_focus = ", ".join(score.missing_skills[:4]) if score.missing_skills else "core stack from the job description"
     targeted_improvements = [
         {
             "section": "Professional Summary",
-            "issue": "Summary is not fully aligned with role requirements.",
-            "rewrite": "Results-driven professional with hands-on experience in key role responsibilities and a track record of measurable impact across cross-functional teams.",
-            "impact": "Improves recruiter relevance scan in the first 10 seconds.",
+            "issue": "Summary is broad and can be more role-specific.",
+            "rewrite": f"Engineer with {max(1, int(profile.years_experience))}+ years building production systems across {skill_focus}; delivered measurable improvements in reliability, velocity, and user impact.",
+            "impact": "Improves recruiter relevance scan in the first 8-10 seconds.",
         },
         {
             "section": "Experience Bullets",
-            "issue": "Bullets are likely task-focused instead of outcome-focused.",
-            "rewrite": "Reframe bullets as action + tool + metric, e.g., 'Built X using Y, improving Z by 25%.'",
-            "impact": "Boosts credibility and interview conversion.",
+            "issue": "Current bullets may describe tasks more than outcomes.",
+            "rewrite": "Use this format: action + stack + scope + metric (e.g., 'Optimized ETL pipeline on Spark, reducing runtime by 37% and improving SLA compliance to 99.9%').",
+            "impact": "Raises interview conversion by making achievements verifiable.",
         },
         {
-            "section": "Skills",
-            "issue": "Important JD skills may be missing or buried.",
-            "rewrite": "Use grouped skills subsections: Languages, Data, Cloud, Frameworks, Tools.",
-            "impact": "Improves ATS extraction and keyword match rates.",
+            "section": "Keyword Alignment",
+            "issue": "Critical role terms are missing or underrepresented.",
+            "rewrite": f"Add these terms where true in experience/project bullets: {keyword_focus}.",
+            "impact": "Improves ATS retrieval for targeted role searches.",
         },
         {
             "section": "Projects",
-            "issue": "Projects may not reflect target role depth.",
-            "rewrite": "Add 2 role-aligned projects with stack, scope, and quantified outcomes.",
-            "impact": "Adds practical signal for hiring managers.",
+            "issue": "Projects can better demonstrate complexity and ownership.",
+            "rewrite": "Add 2 role-aligned projects with baseline/problem, architecture choices, and measured outcomes.",
+            "impact": "Adds concrete execution signal for hiring manager review.",
         },
     ]
+    strengths: List[str] = []
+    if score.matched_skills:
+        strengths.append(f"Matches core role skills: {', '.join(score.matched_skills[:6])}.")
+    if score.formatting_score >= 80:
+        strengths.append("ATS-safe structure quality is strong (sections/contact/readability).")
+    if score.impact_match >= 65:
+        strengths.append("Resume includes meaningful evidence of delivered outcomes.")
+    if not strengths:
+        strengths = ["Resume has baseline structure for ATS parsing and downstream optimization."]
+
+    gaps = suggestions if suggestions else score.evidence_gaps
+    ats_risks = [
+        "Keyword overuse without measurable outcomes can look like ATS optimization without delivery proof.",
+        "Missing quantified impact reduces recruiter trust during shortlist decisions.",
+    ]
+    if score.confidence < 65:
+        ats_risks.insert(0, "Signal confidence is moderate; extracted resume evidence may be insufficient for high-certainty ranking.")
     return {
         "model_used": "heuristic-engine",
-        "executive_summary": score.summary,
-        "strengths": [
-            "Resume includes core section structure used by ATS systems.",
-            "Deterministic scoring indicates role alignment potential.",
-        ],
-        "gaps": suggestions,
-        "ats_risks": [
-            "Possible mismatch between resume wording and job description terminology.",
-            "Insufficient quantified impact in bullets can reduce recruiter confidence.",
-        ],
+        "executive_summary": f"{score.summary} Confidence: {score.confidence}/100. Impact evidence: {score.impact_match}/100.",
+        "strengths": strengths,
+        "gaps": gaps[:8],
+        "ats_risks": ats_risks[:8],
         "targeted_improvements": targeted_improvements,
-        "optimized_professional_summary": "Target-role focused candidate with proven delivery across relevant tools and workflows, known for measurable execution, strong collaboration, and consistent outcome ownership.",
+        "optimized_professional_summary": (
+            "Target-role aligned engineer with proven ownership of production delivery, measurable performance gains, "
+            "and hands-on execution across cross-functional teams."
+        ),
         "interview_focus": [
-            "Explain role-relevant projects with measurable business results.",
-            "Prepare examples of ownership, tradeoffs, and cross-team collaboration.",
+            "Prepare 3 STAR stories with hard metrics and tradeoff decisions.",
+            "Map each top JD requirement to one concrete project/result example.",
             "Be ready to map each key JD requirement to specific past experience.",
         ],
         "first_30_day_plan": [
             "Week 1: map team goals and delivery expectations.",
-            "Week 2: deep dive into core systems, tools, and metrics.",
-            "Week 3: deliver one scoped improvement with measurable value.",
-            "Week 4: propose a quarter roadmap aligned to business priorities.",
+            "Week 2: baseline core system metrics and identify one quick-win bottleneck.",
+            "Week 3: deliver one scoped improvement with measurable before/after impact.",
+            "Week 4: propose a role-aligned 90-day execution roadmap.",
         ],
     }
 
@@ -888,7 +1116,13 @@ def load_custom_css(theme_mode: str) -> None:
 
 
 def init_session_state() -> None:
-    defaults = {"screening_results": [], "deep_analysis_cache": {}, "last_job_description": "", "theme_mode": "Dark"}
+    defaults = {
+        "screening_results": [],
+        "deep_analysis_cache": {},
+        "last_job_description": "",
+        "theme_mode": "Dark",
+        "auto_deep_analysis": True,
+    }
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
@@ -912,10 +1146,15 @@ def build_candidate_report_markdown(
         f"- Skills: {score.skills_match}/100",
         f"- Keywords: {score.keywords_match}/100",
         f"- Experience: {score.experience_match}/100",
+        f"- Impact Evidence: {score.impact_match}/100",
         f"- Formatting: {score.formatting_score}/100",
+        f"- Signal Confidence: {score.confidence}/100",
         "",
         "## Missing Keywords",
         f"- {', '.join(score.missing_keywords[:15]) if score.missing_keywords else 'None'}",
+        "",
+        "## Evidence Gaps",
+        f"- {'; '.join(score.evidence_gaps) if score.evidence_gaps else 'No major evidence gaps detected.'}",
         "",
         "## Quick Suggestions",
     ]
@@ -996,6 +1235,12 @@ def main() -> None:
             help="Use Gemini vision to read scanned PDFs when direct text extraction is weak.",
             disabled=not bool(effective_api_key),
         )
+        auto_deep_analysis = st.toggle(
+            "Auto-run deep analysis",
+            value=bool(st.session_state.auto_deep_analysis),
+            help="Automatically generate AI/heuristic deep analysis for selected candidate once scoring is complete.",
+        )
+        st.session_state.auto_deep_analysis = auto_deep_analysis
         st.markdown("---")
         st.markdown(
             "<p class='mini-note'>Free-tier optimized model set includes Gemini 3 Flash Preview and Gemini 2.x Flash variants.</p>",
@@ -1119,7 +1364,10 @@ def main() -> None:
                 "Skills": score.skills_match,
                 "Keywords": score.keywords_match,
                 "Experience": score.experience_match,
+                "Impact": score.impact_match,
                 "Formatting": score.formatting_score,
+                "Confidence": score.confidence,
+                "Evidence Gaps": len(score.evidence_gaps),
                 "Years Exp": round(profile.years_experience, 1),
             }
         )
@@ -1139,12 +1387,14 @@ def main() -> None:
 
     st.markdown("---")
     st.subheader(f"Detailed ATS Review: {selected_profile.file_name}")
-    d1, d2, d3, d4, d5 = st.columns(5)
+    d1, d2, d3, d4, d5, d6 = st.columns(6)
     d1.metric("Overall", f"{selected_score.overall_score}/100")
     d2.metric("Skills", f"{selected_score.skills_match}/100")
     d3.metric("Keywords", f"{selected_score.keywords_match}/100")
     d4.metric("Experience", f"{selected_score.experience_match}/100")
-    d5.metric("Formatting", f"{selected_score.formatting_score}/100")
+    d5.metric("Impact", f"{selected_score.impact_match}/100")
+    d6.metric("Confidence", f"{selected_score.confidence}/100")
+    st.caption(f"Formatting score: {selected_score.formatting_score}/100")
     st.write(selected_score.summary)
 
     c1, c2 = st.columns(2)
@@ -1154,6 +1404,13 @@ def main() -> None:
     with c2:
         st.markdown("**Missing Keywords**")
         st.write(", ".join(selected_score.missing_keywords) if selected_score.missing_keywords else "No major keyword gaps detected.")
+
+    st.markdown("**Evidence Gaps**")
+    if selected_score.evidence_gaps:
+        for gap in selected_score.evidence_gaps:
+            st.markdown(f"- {gap}")
+    else:
+        st.write("No major evidence gaps detected.")
 
     st.markdown("**Fast Improvement Suggestions**")
     for suggestion in selected_item["quick_suggestions"]:
@@ -1167,16 +1424,26 @@ def main() -> None:
         f"{selected_profile.candidate_id}:"
         f"{hashlib.sha256(st.session_state.last_job_description.encode('utf-8')).hexdigest()[:12]}"
     )
-    trigger_deep_analysis = st.button("Generate AI Deep Analysis", use_container_width=True)
+    button_label = (
+        "Regenerate AI Deep Analysis"
+        if candidate_cache_key in st.session_state.deep_analysis_cache
+        else "Generate AI Deep Analysis"
+    )
+    trigger_deep_analysis = st.button(button_label, use_container_width=True)
+    should_generate_deep = trigger_deep_analysis or (
+        bool(st.session_state.auto_deep_analysis) and candidate_cache_key not in st.session_state.deep_analysis_cache
+    )
 
-    if trigger_deep_analysis:
+    if should_generate_deep:
         if not effective_api_key:
-            st.warning("No API key found. Generating heuristic deep analysis.")
+            if trigger_deep_analysis:
+                st.warning("No API key found. Generating heuristic deep analysis.")
             st.session_state.deep_analysis_cache[candidate_cache_key] = heuristic_deep_analysis(
                 selected_profile, selected_score, st.session_state.last_job_description
             )
         else:
-            with st.spinner("Generating structured deep analysis..."):
+            spinner_msg = "Generating structured deep analysis..." if trigger_deep_analysis else "Auto-generating deep analysis..."
+            with st.spinner(spinner_msg):
                 try:
                     analysis = deep_analysis_with_fallback(
                         selected_profile,
@@ -1240,6 +1507,8 @@ def main() -> None:
             mime="text/markdown",
             use_container_width=True,
         )
+    elif not st.session_state.auto_deep_analysis:
+        st.info("Click 'Generate AI Deep Analysis' to create detailed rewrite guidance for this candidate.")
 
 
 if __name__ == "__main__":

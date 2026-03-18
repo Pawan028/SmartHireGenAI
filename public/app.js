@@ -44,11 +44,15 @@ function renderResult(data) {
       <div class="score-item"><b>${scores.skills_match ?? "-"}</b><span>Skills</span></div>
       <div class="score-item"><b>${scores.keywords_match ?? "-"}</b><span>Keywords</span></div>
       <div class="score-item"><b>${scores.experience_match ?? "-"}</b><span>Experience</span></div>
-      <div class="score-item"><b>${scores.formatting_score ?? "-"}</b><span>Formatting</span></div>
+      <div class="score-item"><b>${scores.impact_match ?? "-"}</b><span>Impact</span></div>
+      <div class="score-item"><b>${scores.confidence ?? "-"}</b><span>Confidence</span></div>
     </div>
 
     <h3>Missing Keywords</h3>
     ${safeList(scores.missing_keywords)}
+
+    <h3>Evidence Gaps</h3>
+    ${safeList(scores.evidence_gaps)}
 
     <h3>Quick Suggestions</h3>
     ${safeList(quick)}
