@@ -796,51 +796,91 @@ def heuristic_deep_analysis(profile: ResumeProfile, score: ScoreCard, job_descri
     }
 
 
-def load_custom_css() -> None:
+def load_custom_css(theme_mode: str) -> None:
+    is_dark = theme_mode.lower() == "dark"
+    palette = {
+        "bg_gradient": "radial-gradient(circle at top left, #0e1726 0%, #0b1220 45%, #1b2035 100%)"
+        if is_dark
+        else "radial-gradient(circle at top left, #eef5ec 0%, #f7faf6 45%, #eef3f8 100%)",
+        "text": "#e4ecff" if is_dark else "#182218",
+        "muted": "#9fb2d8" if is_dark else "#5b6a5d",
+        "brand": "#2dd4bf" if is_dark else "#0f766e",
+        "brand_soft": "#153b38" if is_dark else "#d8f3ef",
+        "line": "#2a3855" if is_dark else "#d4ded1",
+        "hero_bg": "linear-gradient(130deg, #111a2e 0%, #12243d 100%)"
+        if is_dark
+        else "linear-gradient(130deg, #ffffff 0%, #eef6f4 100%)",
+        "sidebar_bg": "#0f1728" if is_dark else "#fbfdfb",
+        "card_bg": "rgba(18, 30, 52, 0.82)" if is_dark else "rgba(255, 255, 255, 0.88)",
+    }
+
     st.markdown(
-        """
+        f"""
         <style>
         @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Source+Sans+3:wght@400;500;600;700&display=swap');
-        :root {
-            --bg: #f4f7f3;
-            --text: #182218;
-            --muted: #5b6a5d;
-            --brand: #0f766e;
-            --brand-soft: #d8f3ef;
-            --line: #d4ded1;
-        }
-        .stApp {
-            background: radial-gradient(circle at top left, #eef5ec 0%, #f7faf6 45%, #eef3f8 100%);
+        :root {{
+            --text: {palette["text"]};
+            --muted: {palette["muted"]};
+            --brand: {palette["brand"]};
+            --brand-soft: {palette["brand_soft"]};
+            --line: {palette["line"]};
+            --card-bg: {palette["card_bg"]};
+        }}
+        .stApp {{
+            background: {palette["bg_gradient"]};
             color: var(--text);
             font-family: 'Source Sans 3', sans-serif;
-        }
-        h1, h2, h3 {
+        }}
+        h1, h2, h3 {{
             font-family: 'Space Grotesk', sans-serif;
+            color: var(--text) !important;
+            letter-spacing: 0.01em;
+        }}
+        p, div, span, label {{
             color: var(--text);
-        }
-        .app-hero {
+        }}
+        .app-hero {{
             border: 1px solid var(--line);
-            background: linear-gradient(130deg, #ffffff 0%, #eef6f4 100%);
+            background: {palette["hero_bg"]};
             border-radius: 18px;
             padding: 1.2rem 1.4rem;
             margin-bottom: 1rem;
-        }
-        .meta-pill {
+            box-shadow: 0 8px 34px rgba(0, 0, 0, 0.16);
+        }}
+        .panel {{
+            border: 1px solid var(--line);
+            background: var(--card-bg);
+            border-radius: 14px;
+            padding: 0.9rem 1rem;
+            margin-bottom: 0.7rem;
+        }}
+        .meta-pill {{
             display: inline-block;
             padding: 0.2rem 0.55rem;
             border-radius: 999px;
             background: var(--brand-soft);
             color: var(--brand);
-            border: 1px solid #b8e4dd;
+            border: 1px solid var(--line);
             font-size: 0.78rem;
             margin-right: 0.4rem;
-        }
-        [data-testid="stMetricValue"] { color: var(--brand); }
-        [data-testid="stSidebar"] {
+            margin-bottom: 0.35rem;
+        }}
+        [data-testid="stMetricValue"] {{
+            color: var(--brand);
+        }}
+        [data-testid="stSidebar"] {{
             border-right: 1px solid var(--line);
-            background: #fbfdfb;
-        }
-        .mini-note { color: var(--muted); font-size: 0.86rem; }
+            background: {palette["sidebar_bg"]};
+        }}
+        [data-testid="stDataFrame"] {{
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            overflow: hidden;
+        }}
+        .mini-note {{
+            color: var(--muted);
+            font-size: 0.88rem;
+        }}
         </style>
         """,
         unsafe_allow_html=True,
@@ -848,7 +888,7 @@ def load_custom_css() -> None:
 
 
 def init_session_state() -> None:
-    defaults = {"screening_results": [], "deep_analysis_cache": {}, "last_job_description": ""}
+    defaults = {"screening_results": [], "deep_analysis_cache": {}, "last_job_description": "", "theme_mode": "Dark"}
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
@@ -911,12 +951,22 @@ def main() -> None:
         layout="wide",
         initial_sidebar_state="expanded",
     )
-    load_custom_css()
     init_session_state()
+    load_custom_css(st.session_state.theme_mode)
     env_api_key = os.getenv("GOOGLE_API_KEY", "").strip()
 
     with st.sidebar:
         st.header("Runtime Settings")
+        theme_mode = st.radio(
+            "Theme",
+            options=["Dark", "Light"],
+            index=0 if st.session_state.theme_mode == "Dark" else 1,
+            horizontal=True,
+        )
+        if theme_mode != st.session_state.theme_mode:
+            st.session_state.theme_mode = theme_mode
+            st.rerun()
+
         override_key = st.text_input("Gemini API key override", type="password")
         effective_api_key = override_key.strip() or env_api_key
         if effective_api_key:
@@ -1038,6 +1088,23 @@ def main() -> None:
     if not results:
         st.info("Run screening to see ATS rankings and improvement suggestions.")
         return
+
+    total_candidates = len(results)
+    strong_fit = len([item for item in results if item["score"].overall_score >= 80])
+    moderate_fit = len([item for item in results if 60 <= item["score"].overall_score < 80])
+    low_fit = len([item for item in results if item["score"].overall_score < 60])
+
+    st.markdown(
+        f"""
+        <div class="panel">
+            <strong>Screening Snapshot</strong><br/>
+            <span class="mini-note">
+                Total: {total_candidates} &nbsp;|&nbsp; Strong Fit: {strong_fit} &nbsp;|&nbsp; Moderate Fit: {moderate_fit} &nbsp;|&nbsp; Low Fit: {low_fit}
+            </span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     st.subheader("Candidate Ranking")
     table_rows = []

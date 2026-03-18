@@ -1,65 +1,64 @@
 # SmartHire ATS Pro
 
-Production-grade ATS screening app built with Streamlit and Gemini Flash model fallbacks.
+Production-grade ATS screening with deterministic scoring, Gemini Flash fallback models, explicit Dark/Light themes, and two deployment paths:
 
-## What is new
+- Streamlit app (`app.py`) for full recruiter workflow
+- Vercel app (`public/` + `api/index.py`) for serverless deployment
 
-- Multi-resume screening and ranking (up to 15 resumes in one run)
-- Deterministic ATS scoring engine:
-  - Keywords match
-  - Skills match
-  - Experience fit
-  - Formatting readiness
-- Resume gap analysis with concrete, actionable suggestions
-- Structured AI deep analysis with JSON output validation
-- Gemini fallback chain optimized for free-tier friendly Flash models:
+## Core features
+
+- Multi-resume ranking and ATS scorecards
+- Skills/keywords/experience/formatting scoring
+- Resume improvement suggestions and rewrite guidance
+- AI deep analysis with fallback model order:
   - `gemini-3-flash-preview`
   - `gemini-2.5-flash`
   - `gemini-2.5-flash-lite`
   - `gemini-2.0-flash`
   - `gemini-2.0-flash-lite`
-- Scanned PDF fallback using Gemini vision extraction when text parsing is weak
-- Export candidate report as Markdown
+- Scanned-PDF fallback using Gemini vision extraction
+- Dark and Light theme support in UI
 
-## Architecture highlights
-
-- ATS scoring is deterministic and always available
-- AI generation is optional and fault tolerant
-- Automatic retry and model fallback for reliability
-- Session caching for PDF text extraction
-- Strict JSON parsing/validation for deep-analysis responses
-
-## Setup
-
-1. Create and activate your environment.
-2. Install dependencies:
+## Local setup (Streamlit)
 
 ```bash
 pip install -r requirements.txt
 ```
 
-3. Set Gemini key in `.env`:
+Create `.env`:
 
 ```env
 GOOGLE_API_KEY=your_key_here
 ```
 
-4. Run the app:
+Run:
 
 ```bash
 streamlit run app.py
 ```
 
-## Usage flow
+## Vercel deployment
 
-1. Paste a job description.
-2. Upload one or more PDF resumes.
-3. Click **Run ATS Screening**.
-4. Review ranking and candidate-level gaps.
-5. Click **Generate AI Deep Analysis** for rewrite-ready insights.
-6. Download a report for the selected candidate.
+This repo now includes:
 
-## Notes
+- `vercel.json`
+- `api/index.py` (FastAPI serverless endpoint)
+- `public/index.html`, `public/styles.css`, `public/app.js`
 
-- If no API key is configured, the app still works in deterministic heuristic mode.
-- For best ATS reliability, use text-based PDFs instead of image-only scans.
+### Steps
+
+1. Import this repo in Vercel.
+2. Set environment variable in Vercel Project Settings:
+   - `GOOGLE_API_KEY` = your Gemini key
+3. Deploy.
+
+### Endpoints
+
+- `GET /api/health`
+- `POST /api/analyze` (multipart form: `resume`, `job_description`, optional `enable_ai`, `temperature`)
+
+## Security notes
+
+- `.env` is ignored and not tracked.
+- Use `.env.example` as template.
+- Never commit API keys.

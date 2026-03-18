@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SmartHire ATS Pro</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=Public+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <main class="container">
+    <header class="hero">
+      <div>
+        <h1>SmartHire ATS Pro</h1>
+        <p>Vercel-ready ATS screening with resume scoring, gap analysis, and AI rewrite suggestions.</p>
+      </div>
+      <button id="themeToggle" class="theme-btn" type="button" aria-label="Toggle theme">Switch Theme</button>
+    </header>
+
+    <section class="card">
+      <h2>Run Analysis</h2>
+      <form id="analyzeForm">
+        <label for="resume">Resume (PDF)</label>
+        <input id="resume" name="resume" type="file" accept=".pdf" required />
+
+        <label for="jobDescription">Job Description</label>
+        <textarea
+          id="jobDescription"
+          name="job_description"
+          rows="8"
+          placeholder="Paste full role description including responsibilities and required skills."
+          required
+        ></textarea>
+
+        <div class="row">
+          <label class="check">
+            <input id="enableAi" type="checkbox" checked />
+            Enable AI deep analysis
+          </label>
+
+          <label class="inline-field">
+            Temperature
+            <input id="temperature" type="number" min="0" max="1" step="0.1" value="0.2" />
+          </label>
+        </div>
+
+        <button id="submitBtn" type="submit">Analyze Resume</button>
+      </form>
+      <p class="note">Max file size: 8 MB. Set <code>GOOGLE_API_KEY</code> in Vercel env for AI suggestions.</p>
+    </section>
+
+    <section id="resultCard" class="card hidden">
+      <h2>Result</h2>
+      <div id="status"></div>
+      <div id="result"></div>
+    </section>
+  </main>
+
+  <script src="/app.js" defer></script>
+</body>
+</html>
